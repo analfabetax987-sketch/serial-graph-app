@@ -174,10 +174,12 @@ class SerialGraphApp:
                     self.current_message.extend(byte)
                     self.last_byte_time = current_time
                     
-                    # Check if we've reached expected size
+                    # Check if we've reached expected size (96 bytes)
                     if len(self.current_message) >= self.EXPECTED_BYTES:
+                        # Message is complete, process it
                         self.process_complete_message()
                         self.current_message = bytearray()
+                        self.last_byte_time = None  # Reset to prevent pause detection on next byte
                 
                 time.sleep(0.001)  # Small delay to prevent CPU spinning
                 
@@ -197,27 +199,25 @@ class SerialGraphApp:
             self.byte_histories[byte_position].append(byte_value)
         
         self.message_count += 1
-        self.root.after(0, self.update_graphs)
+        
+        # Update UI on main thread
+        self.root.after(0, lambda: self.update_stats_and_check_complete())
+    
+    def update_stats_and_check_complete(self):
+        """Update stats and check if sampling is complete"""
+        self.stats_label.config(text=f"Messages received: {self.message_count}/{self.TARGET_SAMPLES}")
         
         # Check if we've reached the target number of samples
         if self.message_count >= self.TARGET_SAMPLES:
-            self.root.after(0, self.sampling_complete)
+            # Render all graphs at once when complete
+            self.root.after(100, self.render_all_graphs)
+            self.root.after(200, self.sampling_complete)
+        else:
+            # Render graphs incrementally during sampling
+            self.root.after(0, self.render_all_graphs)
     
-    def sampling_complete(self):
-        """Called when sampling is complete"""
-        self.running = False
-        self.status_label.config(text="Status: Sampling Complete!", foreground="blue")
-        self.start_btn.config(state=tk.NORMAL)
-        self.stop_btn.config(state=tk.DISABLED)
-        if self.serial_port and self.serial_port.is_open:
-            self.serial_port.close()
-        messagebox.showinfo("Complete", f"Successfully collected {self.message_count} samples!")
-    
-    def update_graphs(self):
-        """Update all 96 graphs with data from all messages"""
-        self.stats_label.config(text=f"Messages received: {self.message_count}/{self.TARGET_SAMPLES}")
-        
-        # Update each byte position graph
+    def render_all_graphs(self):
+        """Render all 96 graphs efficiently"""
         for byte_position in range(self.EXPECTED_BYTES):
             ax = self.axes[byte_position]
             ax.clear()
@@ -225,7 +225,7 @@ class SerialGraphApp:
             values = self.byte_histories[byte_position]
             
             if values:  # Only plot if we have data
-                message_numbers = range(1, len(values) + 1)
+                message_numbers = list(range(1, len(values) + 1))
                 
                 # Plot line graph - X axis is message number, Y axis is the byte value
                 ax.plot(message_numbers, values, marker='o', linestyle='-', 
@@ -237,9 +237,19 @@ class SerialGraphApp:
                 ax.set_xlabel("Sample #", fontsize=8)
                 ax.grid(True, alpha=0.3)
                 ax.tick_params(labelsize=7)
-                
-                self.figures[byte_position].tight_layout()
-                self.canvases[byte_position].draw()
+            
+            self.figures[byte_position].tight_layout()
+            self.canvases[byte_position].draw_idle()  # Use draw_idle for better performance
+    
+    def sampling_complete(self):
+        """Called when sampling is complete"""
+        self.running = False
+        self.status_label.config(text="Status: Sampling Complete!", foreground="blue")
+        self.start_btn.config(state=tk.NORMAL)
+        self.stop_btn.config(state=tk.DISABLED)
+        if self.serial_port and self.serial_port.is_open:
+            self.serial_port.close()
+        messagebox.showinfo("Complete", f"Successfully collected {self.message_count} samples for all 96 byte positions!")
 
 
 def main():
