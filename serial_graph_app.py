@@ -26,7 +26,10 @@ class SerialGraphApp:
         
         # Configuration
         self.PORT = "COM5"
-        self.BAUD_RATE = 9600
+        self.BAUD_RATE = 19200
+        self.BYTESIZE = serial.EIGHTBITS
+        self.PARITY = serial.PARITY_ODD
+        self.STOPBITS = serial.STOPBITS_ONE
         self.EXPECTED_BYTES = 96
         self.PAUSE_THRESHOLD = 0.5  # seconds - pause longer than this marks end of message
         
@@ -52,7 +55,7 @@ class SerialGraphApp:
         control_frame.pack(side=tk.TOP, fill=tk.X, padx=10, pady=10)
         
         ttk.Label(control_frame, text=f"Port: {self.PORT}", font=("Arial", 10)).pack(side=tk.LEFT, padx=5)
-        ttk.Label(control_frame, text=f"Baud: {self.BAUD_RATE}", font=("Arial", 10)).pack(side=tk.LEFT, padx=5)
+        ttk.Label(control_frame, text=f"Baud: {self.BAUD_RATE} (8O1)", font=("Arial", 10)).pack(side=tk.LEFT, padx=5)
         ttk.Label(control_frame, text=f"Message Size: {self.EXPECTED_BYTES} bytes/values", font=("Arial", 10)).pack(side=tk.LEFT, padx=5)
         
         self.status_label = ttk.Label(control_frame, text="Status: Disconnected", foreground="red", font=("Arial", 10, "bold"))
@@ -115,7 +118,14 @@ class SerialGraphApp:
     def start_connection(self):
         """Start serial connection and reading thread"""
         try:
-            self.serial_port = serial.Serial(self.PORT, self.BAUD_RATE, timeout=1)
+            self.serial_port = serial.Serial(
+                port=self.PORT,
+                baudrate=self.BAUD_RATE,
+                bytesize=self.BYTESIZE,
+                parity=self.PARITY,
+                stopbits=self.STOPBITS,
+                timeout=1
+            )
             self.running = True
             self.status_label.config(text="Status: Connected", foreground="green")
             self.start_btn.config(state=tk.DISABLED)
