@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Serial Port Graphing Application
+Serial Port Data Logger
 Reads 96-byte messages from COM3. Each message contains 96 integer values.
-Each byte position gets its own line graph that grows with each new message.
+Displays all values in a table/list format.
 Message boundaries are detected by 5ms pauses between data streams.
 Stops automatically after collecting 10 samples.
 """
@@ -10,20 +10,15 @@ Stops automatically after collecting 10 samples.
 import serial
 import threading
 import time
-from collections import deque
 import tkinter as tk
 from tkinter import ttk, messagebox
-import matplotlib.pyplot as plt
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-from matplotlib.figure import Figure
-import numpy as np
 
 
-class SerialGraphApp:
+class SerialDataLogger:
     def __init__(self, root):
         self.root = root
-        self.root.title("Serial Port Data Grapher - COM3 (96 Channels)")
-        self.root.geometry("1400x900")
+        self.root.title("Serial Data Logger - COM3 (96 Channels)")
+        self.root.geometry("1400x600")
         
         # Configuration
         self.PORT = "COM3"
@@ -32,14 +27,11 @@ class SerialGraphApp:
         self.PARITY = serial.PARITY_ODD
         self.STOPBITS = serial.STOPBITS_ONE
         self.EXPECTED_BYTES = 96
-        self.PAUSE_THRESHOLD = 0.005  # 5 milliseconds - pause longer than this marks end of message
+        self.PAUSE_THRESHOLD = 0.005  # 5 milliseconds
         self.TARGET_SAMPLES = 10  # Stop after collecting 10 samples
         
-        # Data storage - each byte position gets its own history list
-        # byte_histories[0] = [value_from_msg1, value_from_msg2, value_from_msg3, ...]
-        # byte_histories[1] = [value_from_msg1, value_from_msg2, value_from_msg3, ...]
-        # etc. for all 96 byte positions
-        self.byte_histories = [[] for _ in range(self.EXPECTED_BYTES)]
+        # Data storage - each byte position gets its own list of values
+        self.byte_values = [[] for _ in range(self.EXPECTED_BYTES)]
         
         self.current_message = bytearray()
         self.message_count = 0
@@ -58,9 +50,8 @@ class SerialGraphApp:
         
         ttk.Label(control_frame, text=f"Port: {self.PORT}", font=("Arial", 10)).pack(side=tk.LEFT, padx=5)
         ttk.Label(control_frame, text=f"Baud: {self.BAUD_RATE} (8O1)", font=("Arial", 10)).pack(side=tk.LEFT, padx=5)
-        ttk.Label(control_frame, text=f"Message Size: {self.EXPECTED_BYTES} bytes/values", font=("Arial", 10)).pack(side=tk.LEFT, padx=5)
+        ttk.Label(control_frame, text=f"Message Size: {self.EXPECTED_BYTES} bytes", font=("Arial", 10)).pack(side=tk.LEFT, padx=5)
         ttk.Label(control_frame, text=f"Target Samples: {self.TARGET_SAMPLES}", font=("Arial", 10)).pack(side=tk.LEFT, padx=5)
-        ttk.Label(control_frame, text=f"Pause Threshold: {self.PAUSE_THRESHOLD*1000:.1f}ms", font=("Arial", 10)).pack(side=tk.LEFT, padx=5)
         
         self.status_label = ttk.Label(control_frame, text="Status: Disconnected", foreground="red", font=("Arial", 10, "bold"))
         self.status_label.pack(side=tk.LEFT, padx=20)
@@ -75,49 +66,42 @@ class SerialGraphApp:
         stats_frame = ttk.Frame(self.root)
         stats_frame.pack(side=tk.TOP, fill=tk.X, padx=10, pady=5)
         
-        self.stats_label = ttk.Label(stats_frame, text="Messages received: 0/10", font=("Arial", 10, "bold"))
+        self.stats_label = ttk.Label(stats_frame, text="Samples collected: 0/10", font=("Arial", 10, "bold"))
         self.stats_label.pack(side=tk.LEFT)
         
-        # Graph Frame with scrollbar
-        graph_frame = ttk.Frame(self.root)
-        graph_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        # Table Frame
+        table_frame = ttk.Frame(self.root)
+        table_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
         
-        # Create canvas with scrollbar for scrolling through all 96 graphs
-        canvas = tk.Canvas(graph_frame, bg="white")
-        scrollbar = ttk.Scrollbar(graph_frame, orient="vertical", command=canvas.yview)
-        scrollable_frame = ttk.Frame(canvas)
+        # Create treeview with scrollbars
+        tree_scroll_y = ttk.Scrollbar(table_frame, orient="vertical")
+        tree_scroll_x = ttk.Scrollbar(table_frame, orient="horizontal")
         
-        scrollable_frame.bind(
-            "<Configure>",
-            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
-        )
+        # Create columns (Byte 0, Byte 1, ... Byte 95)
+        columns = [f"Byte {i:02d}" for i in range(self.EXPECTED_BYTES)]
         
-        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
-        canvas.configure(yscrollcommand=scrollbar.set)
+        self.tree = ttk.Treeview(table_frame, columns=columns, height=15, 
+                                yscrollcommand=tree_scroll_y.set, 
+                                xscrollcommand=tree_scroll_x.set)
         
-        # Pack canvas and scrollbar
-        canvas.pack(side="left", fill="both", expand=True)
-        scrollbar.pack(side="right", fill="y")
+        tree_scroll_y.config(command=self.tree.yview)
+        tree_scroll_x.config(command=self.tree.xview)
         
-        # Create figures for each byte position (96 graphs)
-        self.figures = []
-        self.canvases = []
-        self.axes = []
+        # Format columns
+        self.tree.column("#0", width=0, stretch=tk.NO)
         
-        for i in range(self.EXPECTED_BYTES):
-            fig = Figure(figsize=(12, 1.0), dpi=100)
-            ax = fig.add_subplot(111)
-            ax.set_title(f"Byte Position {i:02d}", fontsize=9, fontweight='bold')
-            ax.set_ylabel("Value", fontsize=8)
-            ax.set_ylim(0, 255)
-            ax.tick_params(labelsize=7)
-            
-            canvas_widget = FigureCanvasTkAgg(fig, master=scrollable_frame)
-            canvas_widget.get_tk_widget().pack(fill=tk.X, padx=2, pady=1)
-            
-            self.figures.append(fig)
-            self.canvases.append(canvas_widget)
-            self.axes.append(ax)
+        for i, col in enumerate(columns):
+            width = 60 if i < 10 else 55
+            self.tree.column(col, anchor=tk.CENTER, width=width)
+            self.tree.heading(col, text=col)
+        
+        # Pack treeview and scrollbars
+        self.tree.grid(row=0, column=0, sticky='nsew')
+        tree_scroll_y.grid(row=0, column=1, sticky='ns')
+        tree_scroll_x.grid(row=1, column=0, sticky='ew')
+        
+        table_frame.grid_rowconfigure(0, weight=1)
+        table_frame.grid_columnconfigure(0, weight=1)
     
     def start_connection(self):
         """Start serial connection and reading thread"""
@@ -132,7 +116,12 @@ class SerialGraphApp:
             )
             self.running = True
             self.message_count = 0
-            self.byte_histories = [[] for _ in range(self.EXPECTED_BYTES)]
+            self.byte_values = [[] for _ in range(self.EXPECTED_BYTES)]
+            
+            # Clear table
+            for item in self.tree.get_children():
+                self.tree.delete(item)
+            
             self.status_label.config(text="Status: Connected - Collecting samples...", foreground="green")
             self.start_btn.config(state=tk.DISABLED)
             self.stop_btn.config(state=tk.NORMAL)
@@ -179,7 +168,7 @@ class SerialGraphApp:
                         # Message is complete, process it
                         self.process_complete_message()
                         self.current_message = bytearray()
-                        self.last_byte_time = None  # Reset to prevent pause detection on next byte
+                        self.last_byte_time = None  # Reset to prevent pause detection
                 
                 time.sleep(0.001)  # Small delay to prevent CPU spinning
                 
@@ -193,53 +182,50 @@ class SerialGraphApp:
         """Process a complete 96-byte message"""
         message = self.current_message[:self.EXPECTED_BYTES]
         
-        # Add each byte value to its corresponding byte position history
+        # Add each byte value to its corresponding byte position list
         for byte_position in range(len(message)):
             byte_value = message[byte_position]
-            self.byte_histories[byte_position].append(byte_value)
+            self.byte_values[byte_position].append(byte_value)
         
         self.message_count += 1
         
         # Update UI on main thread
-        self.root.after(0, lambda: self.update_stats_and_check_complete())
+        self.root.after(0, lambda: self.update_table_and_check_complete())
     
-    def update_stats_and_check_complete(self):
-        """Update stats and check if sampling is complete"""
-        self.stats_label.config(text=f"Messages received: {self.message_count}/{self.TARGET_SAMPLES}")
+    def update_table_and_check_complete(self):
+        """Update table and check if sampling is complete"""
+        self.stats_label.config(text=f"Samples collected: {self.message_count}/{self.TARGET_SAMPLES}")
+        
+        # Update table with current data
+        self.refresh_table()
         
         # Check if we've reached the target number of samples
         if self.message_count >= self.TARGET_SAMPLES:
-            # Render all graphs at once when complete
-            self.root.after(100, self.render_all_graphs)
-            self.root.after(200, self.sampling_complete)
-        else:
-            # Render graphs incrementally during sampling
-            self.root.after(0, self.render_all_graphs)
+            self.root.after(500, self.sampling_complete)
     
-    def render_all_graphs(self):
-        """Render all 96 graphs efficiently"""
-        for byte_position in range(self.EXPECTED_BYTES):
-            ax = self.axes[byte_position]
-            ax.clear()
+    def refresh_table(self):
+        """Refresh the table with current byte values"""
+        # Clear existing rows
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+        
+        # Add rows for each sample
+        for sample_num in range(self.message_count):
+            row_values = []
+            for byte_position in range(self.EXPECTED_BYTES):
+                if sample_num < len(self.byte_values[byte_position]):
+                    value = self.byte_values[byte_position][sample_num]
+                    row_values.append(str(value))
+                else:
+                    row_values.append("")
             
-            values = self.byte_histories[byte_position]
-            
-            if values:  # Only plot if we have data
-                message_numbers = list(range(1, len(values) + 1))
-                
-                # Plot line graph - X axis is message number, Y axis is the byte value
-                ax.plot(message_numbers, values, marker='o', linestyle='-', 
-                       linewidth=1.5, markersize=5, color='blue', markeredgecolor='darkblue')
-                
-                ax.set_title(f"Byte Position {byte_position:02d}", fontsize=9, fontweight='bold')
-                ax.set_ylabel("Value (0-255)", fontsize=8)
-                ax.set_ylim(0, 255)
-                ax.set_xlabel("Sample #", fontsize=8)
-                ax.grid(True, alpha=0.3)
-                ax.tick_params(labelsize=7)
-            
-            self.figures[byte_position].tight_layout()
-            self.canvases[byte_position].draw_idle()  # Use draw_idle for better performance
+            # Insert row with alternating background colors
+            tags = ("oddrow",) if sample_num % 2 == 0 else ("evenrow",)
+            self.tree.insert("", "end", values=row_values, tags=tags)
+        
+        # Configure tag colors
+        self.tree.tag_configure("oddrow", background="#f0f0f0")
+        self.tree.tag_configure("evenrow", background="white")
     
     def sampling_complete(self):
         """Called when sampling is complete"""
@@ -249,12 +235,12 @@ class SerialGraphApp:
         self.stop_btn.config(state=tk.DISABLED)
         if self.serial_port and self.serial_port.is_open:
             self.serial_port.close()
-        messagebox.showinfo("Complete", f"Successfully collected {self.message_count} samples for all 96 byte positions!")
+        messagebox.showinfo("Complete", f"Successfully collected {self.message_count} samples for all 96 bytes!")
 
 
 def main():
     root = tk.Tk()
-    app = SerialGraphApp(root)
+    app = SerialDataLogger(root)
     root.mainloop()
 
 
