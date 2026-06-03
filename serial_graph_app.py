@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """
 Serial Port Graphing Application
-Reads 96-byte messages from COM5. Each message contains 96 integer values.
+Reads 96-byte messages from COM3. Each message contains 96 integer values.
 Each byte position gets its own line graph that grows with each new message.
-Message boundaries are detected by time pauses between data streams.
+Message boundaries are detected by 5ms pauses between data streams.
+Stops automatically after collecting 10 samples.
 """
 
 import serial
@@ -21,17 +22,18 @@ import numpy as np
 class SerialGraphApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("Serial Port Data Grapher - COM5 (96 Channels)")
+        self.root.title("Serial Port Data Grapher - COM3 (96 Channels)")
         self.root.geometry("1400x900")
         
         # Configuration
-        self.PORT = "COM5"
+        self.PORT = "COM3"
         self.BAUD_RATE = 19200
         self.BYTESIZE = serial.EIGHTBITS
         self.PARITY = serial.PARITY_ODD
         self.STOPBITS = serial.STOPBITS_ONE
         self.EXPECTED_BYTES = 96
-        self.PAUSE_THRESHOLD = 0.5  # seconds - pause longer than this marks end of message
+        self.PAUSE_THRESHOLD = 0.005  # 5 milliseconds - pause longer than this marks end of message
+        self.TARGET_SAMPLES = 10  # Stop after collecting 10 samples
         
         # Data storage - each byte position gets its own history list
         # byte_histories[0] = [value_from_msg1, value_from_msg2, value_from_msg3, ...]
@@ -57,6 +59,8 @@ class SerialGraphApp:
         ttk.Label(control_frame, text=f"Port: {self.PORT}", font=("Arial", 10)).pack(side=tk.LEFT, padx=5)
         ttk.Label(control_frame, text=f"Baud: {self.BAUD_RATE} (8O1)", font=("Arial", 10)).pack(side=tk.LEFT, padx=5)
         ttk.Label(control_frame, text=f"Message Size: {self.EXPECTED_BYTES} bytes/values", font=("Arial", 10)).pack(side=tk.LEFT, padx=5)
+        ttk.Label(control_frame, text=f"Target Samples: {self.TARGET_SAMPLES}", font=("Arial", 10)).pack(side=tk.LEFT, padx=5)
+        ttk.Label(control_frame, text=f"Pause Threshold: {self.PAUSE_THRESHOLD*1000:.1f}ms", font=("Arial", 10)).pack(side=tk.LEFT, padx=5)
         
         self.status_label = ttk.Label(control_frame, text="Status: Disconnected", foreground="red", font=("Arial", 10, "bold"))
         self.status_label.pack(side=tk.LEFT, padx=20)
@@ -71,7 +75,7 @@ class SerialGraphApp:
         stats_frame = ttk.Frame(self.root)
         stats_frame.pack(side=tk.TOP, fill=tk.X, padx=10, pady=5)
         
-        self.stats_label = ttk.Label(stats_frame, text="Messages received: 0", font=("Arial", 10, "bold"))
+        self.stats_label = ttk.Label(stats_frame, text="Messages received: 0/10", font=("Arial", 10, "bold"))
         self.stats_label.pack(side=tk.LEFT)
         
         # Graph Frame with scrollbar
@@ -127,7 +131,9 @@ class SerialGraphApp:
                 timeout=1
             )
             self.running = True
-            self.status_label.config(text="Status: Connected", foreground="green")
+            self.message_count = 0
+            self.byte_histories = [[] for _ in range(self.EXPECTED_BYTES)]
+            self.status_label.config(text="Status: Connected - Collecting samples...", foreground="green")
             self.start_btn.config(state=tk.DISABLED)
             self.stop_btn.config(state=tk.NORMAL)
             
@@ -192,10 +198,24 @@ class SerialGraphApp:
         
         self.message_count += 1
         self.root.after(0, self.update_graphs)
+        
+        # Check if we've reached the target number of samples
+        if self.message_count >= self.TARGET_SAMPLES:
+            self.root.after(0, self.sampling_complete)
+    
+    def sampling_complete(self):
+        """Called when sampling is complete"""
+        self.running = False
+        self.status_label.config(text="Status: Sampling Complete!", foreground="blue")
+        self.start_btn.config(state=tk.NORMAL)
+        self.stop_btn.config(state=tk.DISABLED)
+        if self.serial_port and self.serial_port.is_open:
+            self.serial_port.close()
+        messagebox.showinfo("Complete", f"Successfully collected {self.message_count} samples!")
     
     def update_graphs(self):
         """Update all 96 graphs with data from all messages"""
-        self.stats_label.config(text=f"Messages received: {self.message_count}")
+        self.stats_label.config(text=f"Messages received: {self.message_count}/{self.TARGET_SAMPLES}")
         
         # Update each byte position graph
         for byte_position in range(self.EXPECTED_BYTES):
@@ -214,7 +234,7 @@ class SerialGraphApp:
                 ax.set_title(f"Byte Position {byte_position:02d}", fontsize=9, fontweight='bold')
                 ax.set_ylabel("Value (0-255)", fontsize=8)
                 ax.set_ylim(0, 255)
-                ax.set_xlabel("Message #", fontsize=8)
+                ax.set_xlabel("Sample #", fontsize=8)
                 ax.grid(True, alpha=0.3)
                 ax.tick_params(labelsize=7)
                 
