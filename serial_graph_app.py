@@ -23,9 +23,9 @@ class SerialDataLogger:
         # Configuration
         self.PORT = "COM3"
         self.BAUD_RATE = 19200
-        self.BYTESIZE = serial.EIGHTBITS
-        self.PARITY = serial.PARITY_ODD
-        self.STOPBITS = serial.STOPBITS_ONE
+        self.BYTESIZE = serial.EIGHTBITS      # 8 bits (Arduino default)
+        self.PARITY = serial.PARITY_NONE      # No parity (Arduino default)
+        self.STOPBITS = serial.STOPBITS_ONE   # 1 stop bit (Arduino default)
         self.EXPECTED_BYTES = 96
         self.PAUSE_THRESHOLD = 0.005  # 5 milliseconds
         self.TARGET_SAMPLES = 10  # Stop after collecting 10 samples
@@ -49,7 +49,7 @@ class SerialDataLogger:
         control_frame.pack(side=tk.TOP, fill=tk.X, padx=10, pady=10)
         
         ttk.Label(control_frame, text=f"Port: {self.PORT}", font=("Arial", 10)).pack(side=tk.LEFT, padx=5)
-        ttk.Label(control_frame, text=f"Baud: {self.BAUD_RATE} (8O1)", font=("Arial", 10)).pack(side=tk.LEFT, padx=5)
+        ttk.Label(control_frame, text=f"Baud: {self.BAUD_RATE} (8N1 - Arduino Default)", font=("Arial", 10)).pack(side=tk.LEFT, padx=5)
         ttk.Label(control_frame, text=f"Message Size: {self.EXPECTED_BYTES} bytes", font=("Arial", 10)).pack(side=tk.LEFT, padx=5)
         ttk.Label(control_frame, text=f"Target Samples: {self.TARGET_SAMPLES}", font=("Arial", 10)).pack(side=tk.LEFT, padx=5)
         
